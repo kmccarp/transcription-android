@@ -49,25 +49,30 @@ jobs:
 
       - name: ./gradlew ciCheck
         id: ciCheck
-        run: ./gradlew ciCheck --stacktrace --console=plain --warning-mode=summary
-
-      # Surface failures via the job summary + ::error:: annotations so the
-      # cause is visible on the PR page without admin-level log access.
-      - name: Surface test failures
-        if: failure() && steps.ciCheck.outcome == 'failure'
+        shell: bash
         run: |
-          echo "## ciCheck failed — test output below" >> "$GITHUB_STEP_SUMMARY"
-          for xml in $(find core/build/test-results app/build/test-results -name 'TEST-*.xml' 2>/dev/null); do
-            echo "<details><summary>$xml</summary>" >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo '```xml' >> "$GITHUB_STEP_SUMMARY"
-            cat "$xml" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
-          done
-          # Promote each <failure> as a GitHub annotation (visible on PR).
-          python3 - <<'PY'
-          import glob, re, sys, xml.etree.ElementTree as ET
+          set -o pipefail
+          ./gradlew ciCheck --stacktrace --console=plain --warning-mode=summary 2>&1 \
+              | tee gradle-ciCheck.log
+
+      # Surface failures on the PR check page without admin log access.
+      - name: Surface failure
+        if: failure() && steps.ciCheck.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "## ciCheck failed" >> "$GITHUB_STEP_SUMMARY"
+          # 1) Test failure XMLs (when tests actually ran)
+          if find core/build/test-results app/build/test-results -name 'TEST-*.xml' -print -quit 2>/dev/null | grep -q .; then
+            for xml in $(find core/build/test-results app/build/test-results -name 'TEST-*.xml' 2>/dev/null); do
+              echo "<details><summary>$xml</summary>" >> "$GITHUB_STEP_SUMMARY"
+              echo '' >> "$GITHUB_STEP_SUMMARY"
+              echo '```xml' >> "$GITHUB_STEP_SUMMARY"
+              cat "$xml" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+            done
+            python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
           for path in glob.glob('**/build/test-results/**/TEST-*.xml', recursive=True):
               try:
                   root = ET.parse(path).getroot()
@@ -83,6 +88,31 @@ jobs:
                       preview = ' / '.join(body[:5])[:500]
                       print(f"::error title={cls}.{name}::{msg} | {preview}")
           PY
+          fi
+          # 2) Always also dump the last 200 lines of gradle output so we
+          # never have a silent failure from a compile/configure phase.
+          if [ -f gradle-ciCheck.log ]; then
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            echo '<details><summary>Last 200 lines of <code>gradle-ciCheck.log</code></summary>' >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 200 gradle-ciCheck.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+
+            # Also promote anything that looks like a clear error to an
+            # annotation so it shows up on the PR check page directly.
+            python3 - <<'PY'
+          import re, sys
+          with open('gradle-ciCheck.log') as f:
+              lines = f.read().splitlines()
+          # Simple heuristic: anything with "error:" or "FAILED" or "FAILURE:"
+          # turns into a single annotation, capped at 10 to avoid noise.
+          out = [l for l in lines if re.search(r"(error:|FAILED|FAILURE:|undefined reference)", l)]
+          for l in out[:20]:
+              print(f"::error::{l}")
+          PY
+          fi
 
       - name: ./gradlew ciCoverageReports
         if: always()
