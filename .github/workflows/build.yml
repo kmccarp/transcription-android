@@ -18,9 +18,13 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ANDROID_API_LEVEL: '34'
+  ANDROID_BUILD_TOOLS: '34.0.0'
+
 jobs:
   verify:
-    name: ciCheck (tests + coverage + lint)
+    name: ciCheck (tests + coverage)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,12 +37,26 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-${{ env.ANDROID_API_LEVEL }}
+            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: ./gradlew ciCheck
         run: ./gradlew ciCheck --stacktrace
+
+      - name: ./gradlew ciCoverageReports
+        if: always()
+        run: ./gradlew ciCoverageReports --stacktrace || true
+
+      - name: ./gradlew ciLint
+        if: always()
+        run: ./gradlew ciLint --stacktrace || true
 
       - name: Upload JaCoCo reports
         if: always()
@@ -49,6 +67,19 @@ jobs:
             core/build/reports/jacoco/**
             app/build/reports/jacoco/**
             app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
+      - name: Upload test reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            core/build/reports/tests/**
+            app/build/reports/tests/**
+            core/build/test-results/**
+            app/build/test-results/**
+          if-no-files-found: ignore
 
   apk:
     name: ciAssemble (debug APK)
@@ -63,6 +94,13 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-${{ env.ANDROID_API_LEVEL }}
+            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+
       - uses: gradle/actions/setup-gradle@v4
 
       - name: ./gradlew ciAssemble

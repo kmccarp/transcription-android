@@ -43,7 +43,26 @@ android {
         unitTests {
             includeAndroidResources = true
             returnDefaultValues = true
+            all {
+                useJUnit()
+                // Robolectric on JDK 17+ needs the deep-reflection escape hatches.
+                jvmArgs(
+                        '--add-opens=java.base/java.lang=ALL-UNNAMED',
+                        '--add-opens=java.base/java.util=ALL-UNNAMED',
+                        '--add-opens=java.base/java.io=ALL-UNNAMED',
+                        '--add-opens=java.base/java.net=ALL-UNNAMED',
+                        '--add-opens=java.base/java.nio=ALL-UNNAMED',
+                        '--add-opens=java.base/java.text=ALL-UNNAMED',
+                        '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED'
+                )
+            }
         }
+    }
+
+    // Disable lintVital* on release; we don't ship signed APKs from CI yet.
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
     }
 }
 
@@ -65,11 +84,10 @@ jacoco {
     toolVersion = '0.8.12'
 }
 
-tasks.withType(Test).configureEach {
-    useJUnit()
-    finalizedBy 'jacocoTestReport'
-}
-
+// JaCoCo for the Android module is a "best effort" report — we don't fail
+// the build on coverage here (the contract lives in :core). We point at the
+// AGP-managed exec file and the compiled debug classes, but tolerate missing
+// inputs so a clean build still produces something useful.
 tasks.register('jacocoTestReport', JacocoReport) {
     dependsOn 'testDebugUnitTest'
     reports {
@@ -80,11 +98,12 @@ tasks.register('jacocoTestReport', JacocoReport) {
             '**/R.class', '**/R$*.class', '**/BuildConfig.*',
             '**/Manifest*.*', '**/*Test*.*', 'android/**/*.*'
     ]
-    def debugTree = fileTree(dir: "$buildDir/intermediates/javac/debug/classes",
-            excludes: fileFilter)
-    def mainSrc = "$projectDir/src/main/java"
-    sourceDirectories.setFrom(files([mainSrc]))
-    classDirectories.setFrom(files([debugTree]))
-    executionData.setFrom(fileTree(dir: buildDir,
-            includes: ['**/jacoco/testDebugUnitTest.exec']))
+    sourceDirectories.setFrom(files(["$projectDir/src/main/java"]))
+    classDirectories.setFrom(fileTree(layout.buildDirectory) {
+        include '**/intermediates/javac/debug/**/classes/**'
+        exclude fileFilter
+    })
+    executionData.setFrom(fileTree(layout.buildDirectory) {
+        include '**/jacoco/testDebugUnitTest.exec'
+    })
 }

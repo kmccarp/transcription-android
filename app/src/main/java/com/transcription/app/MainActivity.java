@@ -52,15 +52,28 @@ public class MainActivity extends AppCompatActivity {
     private Button copyButton;
     private Button shareButton;
 
-    private ExecutorService executor;
+    private java.util.concurrent.Executor executor;
     private Handler mainHandler;
 
     /** Hook for tests. Defaults to {@link Transcribers#DEFAULT}. */
     private static Transcribers.Factory engineFactory = Transcribers.DEFAULT;
 
+    /** Hook for tests. Defaults to a fresh single-thread {@link ExecutorService}. */
+    private static java.util.concurrent.Executor testExecutor;
+
     @VisibleForTesting
     public static void setEngineFactory(Transcribers.Factory factory) {
         engineFactory = (factory != null) ? factory : Transcribers.DEFAULT;
+    }
+
+    /**
+     * Tests inject a synchronous {@link java.util.concurrent.Executor} (e.g.
+     * {@code Runnable::run}) so the transcription work happens inline and
+     * Robolectric can drain only the main looper to observe results.
+     */
+    @VisibleForTesting
+    public static void setExecutor(java.util.concurrent.Executor executor) {
+        testExecutor = executor;
     }
 
     @Override
@@ -77,7 +90,8 @@ public class MainActivity extends AppCompatActivity {
         copyButton.setOnClickListener(v -> copyToClipboard());
         shareButton.setOnClickListener(v -> shareTranscript());
 
-        executor    = Executors.newSingleThreadExecutor();
+        executor    = (testExecutor != null) ? testExecutor
+                                              : Executors.newSingleThreadExecutor();
         mainHandler = new Handler(Looper.getMainLooper());
 
         Uri audio = ShareIntents.extractAudioUri(getIntent());
@@ -105,7 +119,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        if (executor != null) executor.shutdownNow();
+        if (executor instanceof ExecutorService) {
+            ((ExecutorService) executor).shutdownNow();
+        }
         super.onDestroy();
     }
 

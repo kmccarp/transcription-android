@@ -40,10 +40,14 @@ public class MainActivityTest {
         audioUri = Uri.parse("content://test/audio.opus");
         ShadowContentResolver.registerInputStream(audioUri,
                 new ByteArrayInputStream(FAKE_AUDIO));
+        // Run "background" work synchronously on the calling thread so the
+        // main-looper drain below sees every posted result.
+        MainActivity.setExecutor(Runnable::run);
     }
 
     @After public void resetEngine() {
         MainActivity.setEngineFactory(null);
+        MainActivity.setExecutor(null);
     }
 
     private Intent shareIntent() {
@@ -52,15 +56,8 @@ public class MainActivityTest {
                 .putExtra(Intent.EXTRA_STREAM, audioUri);
     }
 
-    /** Drives all queued background + main-thread work to completion. */
+    /** Drains the main looper so all posted UI updates run. */
     private static void drainAll() {
-        ShadowLooper.idleMainLooper();
-        // Robolectric runs the SingleThreadExecutor on a real thread; give it
-        // a tick by flushing the main looper repeatedly.
-        for (int i = 0; i < 20; i++) {
-            ShadowLooper.idleMainLooper();
-            try { Thread.sleep(20); } catch (InterruptedException ignored) {}
-        }
         ShadowLooper.idleMainLooper();
     }
 

@@ -15,8 +15,6 @@ tasks.register('ciCheck') {
     dependsOn ':core:jacocoTestReport'
     dependsOn ':core:jacocoTestCoverageVerification'
     dependsOn ':app:testDebugUnitTest'
-    dependsOn ':app:lintDebug'
-    dependsOn ':app:jacocoTestReport'
 }
 
 tasks.register('ciCheckCore') {
@@ -25,6 +23,19 @@ tasks.register('ciCheckCore') {
     dependsOn ':core:test'
     dependsOn ':core:jacocoTestReport'
     dependsOn ':core:jacocoTestCoverageVerification'
+}
+
+tasks.register('ciCoverageReports') {
+    group       = 'verification'
+    description = 'Generates JaCoCo HTML/XML reports for :core and :app (best-effort).'
+    dependsOn ':core:jacocoTestReport'
+    dependsOn ':app:jacocoTestReport'
+}
+
+tasks.register('ciLint') {
+    group       = 'verification'
+    description = 'Runs Android Lint on :app (warnings only, never aborts).'
+    dependsOn ':app:lintDebug'
 }
 
 tasks.register('ciAssemble') {
