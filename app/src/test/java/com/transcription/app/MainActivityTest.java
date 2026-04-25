@@ -26,7 +26,6 @@ import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.Shadows;
 import org.robolectric.android.controller.ActivityController;
-import org.robolectric.shadows.ShadowContentResolver;
 import org.robolectric.shadows.ShadowLooper;
 
 @RunWith(AndroidJUnit4.class)
@@ -38,11 +37,17 @@ public class MainActivityTest {
 
     @Before public void registerFakeContentProvider() {
         audioUri = Uri.parse("content://test/audio.opus");
-        ShadowContentResolver.registerInputStream(audioUri,
-                new ByteArrayInputStream(FAKE_AUDIO));
+        registerStream(audioUri, new ByteArrayInputStream(FAKE_AUDIO));
         // Run "background" work synchronously on the calling thread so the
         // main-looper drain below sees every posted result.
         MainActivity.setExecutor(Runnable::run);
+    }
+
+    /** Robolectric 4.13 made registerInputStream an instance method. */
+    private static void registerStream(Uri uri, InputStream in) {
+        Shadows.shadowOf(
+                ApplicationProvider.getApplicationContext().getContentResolver())
+                .registerInputStream(uri, in);
     }
 
     @After public void resetEngine() {
@@ -143,7 +148,7 @@ public class MainActivityTest {
 
     @Test public void share_streamThrowsIOException_isReported() {
         Uri uri = Uri.parse("content://test/broken-stream.opus");
-        ShadowContentResolver.registerInputStream(uri, new InputStream() {
+        registerStream(uri, new InputStream() {
             @Override public int read() throws IOException {
                 throw new IOException("disk on fire");
             }

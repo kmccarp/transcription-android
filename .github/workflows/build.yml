@@ -49,7 +49,7 @@ jobs:
 
       - name: ./gradlew ciCheck
         id: ciCheck
-        run: ./gradlew ciCheck --stacktrace --console=plain
+        run: ./gradlew ciCheck --stacktrace --console=plain --warning-mode=summary
 
       # Surface failures via the job summary + ::error:: annotations so the
       # cause is visible on the PR page without admin-level log access.
