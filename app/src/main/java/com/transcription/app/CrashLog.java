@@ -78,7 +78,6 @@ public final class CrashLog {
         byte[] payload = sw.toString().getBytes(StandardCharsets.UTF_8);
         long existing = f.exists() ? f.length() : 0;
         if (existing + payload.length > MAX_BYTES) {
-            // Drop earlier crashes if we'd overflow.
             //noinspection ResultOfMethodCallIgnored
             f.delete();
         }
@@ -86,5 +85,22 @@ public final class CrashLog {
                 StandardOpenOption.CREATE,
                 StandardOpenOption.WRITE,
                 StandardOpenOption.APPEND);
+
+        // Mirror to an externally-browsable location. No permission needed
+        // for getExternalCacheDir(). Reachable via any file manager at
+        // Android/data/com.transcription.app/cache/last-crash.log
+        File ext = new File(appCtx.getExternalCacheDir(), FILENAME);
+        try {
+            Files.write(ext.toPath(), payload,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.APPEND);
+        } catch (Throwable ignore) {
+            // External storage may be unavailable; the in-cache copy is
+            // still authoritative.
+        }
+
+        // And to logcat for adb/Logcat Reader users.
+        Log.e(TAG, "Uncaught on " + t.getName(), e);
     }
 }

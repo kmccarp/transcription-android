@@ -123,8 +123,17 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        if (item.getItemId() == R.id.action_settings) {
+        int id = item.getItemId();
+        if (id == R.id.action_settings) {
             startActivity(new Intent(this, SettingsActivity.class));
+            return true;
+        }
+        if (id == R.id.action_diagnostics) {
+            String diag = Diagnostics.build(this);
+            statusText.setText(R.string.action_diagnostics);
+            resultText.setText(diag);
+            copyButton.setEnabled(true);
+            shareButton.setEnabled(true);
             return true;
         }
         return super.onOptionsItemSelected(item);
