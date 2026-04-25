@@ -10,3 +10,6 @@ captures/
 out/
 *.log
 .DS_Store
+
+# Whisper model is downloaded by `:app:downloadWhisperModel`. Do not commit.
+app/src/main/assets/whisper-model.bin

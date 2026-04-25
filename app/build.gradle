@@ -3,17 +3,57 @@ plugins {
     id 'jacoco'
 }
 
+// ---------------------------------------------------------------------------
+// Whisper model: downloaded once into src/main/assets/whisper-model.bin so
+// AGP picks it up automatically into the APK. Pinned by SHA-256 to detect
+// repo or supply-chain tampering. The default is the multilingual quantized
+// "tiny" model (Q5_1, ~31 MB) which fits in a reasonable APK and runs fast
+// on commodity phones; override with -PwhisperModel=<key> to swap.
+// ---------------------------------------------------------------------------
+ext.whisperModels = [
+        // Multilingual quantized tiny: best size/quality tradeoff for a phone.
+        'tiny-q5_1'    : [url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin'],
+        // English-only quantized tiny: faster + slightly more accurate for EN.
+        'tiny.en-q5_1' : [url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin'],
+        // Full-precision tiny if you really need it (~75 MB).
+        'tiny'         : [url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'],
+]
+// Optional: pin a SHA-256 by setting -PwhisperModelSha256=<hex>. The task
+// always prints the downloaded file's hash so you can paste it back.
+ext.whisperModelSha256 = project.findProperty('whisperModelSha256') ?: ''
+ext.whisperModelKey = project.findProperty('whisperModel') ?: 'tiny-q5_1'
+
 android {
     namespace   'com.transcription.app'
     compileSdk  34
+    ndkVersion  '26.3.11579264'
 
     defaultConfig {
         applicationId   'com.transcription.app'
         minSdk          24
         targetSdk       34
-        versionCode     1
-        versionName     '0.1.0'
+        versionCode     2
+        versionName     '0.2.0-local-whisper'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static',
+                          '-DWHISPER_BUILD_TESTS=OFF',
+                          '-DWHISPER_BUILD_EXAMPLES=OFF'
+                cppFlags  '-std=c++17', '-O3', '-fexceptions', '-frtti'
+            }
+        }
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
     }
 
     compileOptions {
@@ -29,8 +69,6 @@ android {
     buildTypes {
         debug {
             testCoverageEnabled true
-            // Cleartext for http://10.0.2.2 (the emulator's loopback to host
-            // running Ollama). Production traffic is opt-in via settings.
         }
         release {
             minifyEnabled false
@@ -45,7 +83,6 @@ android {
             returnDefaultValues = true
             all {
                 useJUnit()
-                // Robolectric on JDK 17+ needs the deep-reflection escape hatches.
                 jvmArgs(
                         '--add-opens=java.base/java.lang=ALL-UNNAMED',
                         '--add-opens=java.base/java.util=ALL-UNNAMED',
@@ -59,7 +96,6 @@ android {
         }
     }
 
-    // Disable lintVital* on release; we don't ship signed APKs from CI yet.
     lint {
         abortOnError false
         checkReleaseBuilds false
@@ -84,10 +120,57 @@ jacoco {
     toolVersion = '0.8.12'
 }
 
-// JaCoCo for the Android module is a "best effort" report — we don't fail
-// the build on coverage here (the contract lives in :core). We point at the
-// AGP-managed exec file and the compiled debug classes, but tolerate missing
-// inputs so a clean build still produces something useful.
+// ---------------------------------------------------------------------------
+// downloadWhisperModel: idempotent fetch + SHA-256 verify into the assets
+// directory. Hooked into preBuild so any APK build picks it up automatically.
+// ---------------------------------------------------------------------------
+tasks.register('downloadWhisperModel') {
+    group       = 'whisper'
+    description = "Downloads the Whisper model (key=${ext.whisperModelKey}) into src/main/assets."
+    def info    = ext.whisperModels[ext.whisperModelKey]
+    if (info == null) {
+        throw new GradleException("Unknown whisperModel '${ext.whisperModelKey}'. " +
+                "Known: ${ext.whisperModels.keySet()}")
+    }
+    def dest         = file("src/main/assets/whisper-model.bin")
+    def expectedSha  = ext.whisperModelSha256
+    inputs.property 'url',          info.url
+    inputs.property 'expectedSha',  expectedSha
+    outputs.file dest
+
+    doLast {
+        dest.parentFile.mkdirs()
+        if (dest.exists() && (expectedSha.isEmpty() || sha256Of(dest) == expectedSha)) {
+            logger.lifecycle("Whisper model already present: ${dest} (${dest.length()} bytes)")
+            return
+        }
+        logger.lifecycle("Downloading Whisper model from ${info.url}")
+        new URL(info.url).withInputStream { ins ->
+            dest.withOutputStream { out -> out << ins }
+        }
+        def actual = sha256Of(dest)
+        logger.lifecycle("Whisper model: ${dest} (${dest.length()} bytes) sha256=${actual}")
+        if (!expectedSha.isEmpty() && actual != expectedSha) {
+            dest.delete()
+            throw new GradleException(
+                    "SHA-256 mismatch for ${info.url}: expected ${expectedSha}, got ${actual}")
+        }
+    }
+}
+
+// Hook the download into asset merging *only* for real APK builds. This
+// keeps `./gradlew :app:testDebugUnitTest` and `:app:lintDebug` fast and
+// offline.
+android.applicationVariants.configureEach { variant ->
+    variant.mergeAssetsProvider.configure { dependsOn 'downloadWhisperModel' }
+}
+
+static String sha256Of(File f) {
+    def md = java.security.MessageDigest.getInstance('SHA-256')
+    f.eachByte(8 * 1024) { buf, n -> md.update(buf, 0, n) }
+    md.digest().collect { String.format('%02x', it & 0xff) }.join()
+}
+
 tasks.register('jacocoTestReport', JacocoReport) {
     dependsOn 'testDebugUnitTest'
     reports {

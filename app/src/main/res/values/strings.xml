@@ -19,6 +19,14 @@
     <string name="copy_label">Transcript</string>
     <string name="copied_to_clipboard">Copied to clipboard</string>
 
+    <string name="pref_cat_engine">Transcription engine</string>
+    <string name="pref_cat_ollama">Ollama (remote, optional)</string>
+    <string name="pref_engine_title">Engine</string>
+    <string name="pref_language_title">Language</string>
+    <string name="pref_language_summary">ISO-639-1 code (\"en\", \"fr\", …) or \"auto\" for autodetection.</string>
+    <string name="pref_threads_title">CPU threads</string>
+    <string name="pref_threads_summary">Higher is faster up to your phone\'s core count. Default: 4.</string>
+
     <string name="pref_base_url_title">Ollama base URL</string>
     <string name="pref_base_url_summary">Default 10.0.2.2:11434 reaches the host machine\'s Ollama server when running on the Android emulator.</string>
     <string name="pref_model_title">Model name</string>

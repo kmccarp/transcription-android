@@ -89,7 +89,13 @@ These are the patterns we *don't* want, listed so future agents (and
 humans) can recognize the smell:
 
 - ❌ Adding a Kotlin file "because it's shorter". This codebase is Java.
-- ❌ Pulling in OkHttp / Retrofit / Gson into `:core`. Use `java.net.http`.
+- ❌ Pulling in OkHttp / Retrofit / Gson into `:core`. Use
+  {@code HttpURLConnection}.
+- ❌ **Using `java.net.http.HttpClient` anywhere that ships in the APK.**
+  It's a JDK 11+ class that is **not** in the Android runtime. Tests
+  pass on the JVM and the app crashes on the device with
+  `NoClassDefFoundError`. `:core` is therefore restricted to the
+  Android-compatible `java.net.*` API.
 - ❌ Inlining shell scripts in the GitHub Actions YAML instead of a
   Gradle task.
 - ❌ Skipping a test because "it's hard to mock". If it's hard to mock,

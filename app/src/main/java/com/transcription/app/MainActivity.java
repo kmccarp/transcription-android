@@ -20,7 +20,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AppCompatActivity;
 import com.transcription.core.AudioBytes;
-import com.transcription.core.OllamaConfig;
 import com.transcription.core.TranscriptionEngine;
 import com.transcription.core.TranscriptionException;
 import java.io.IOException;
@@ -157,8 +156,7 @@ public class MainActivity extends AppCompatActivity {
         copyButton.setEnabled(false);
         shareButton.setEnabled(false);
 
-        OllamaConfig config = Prefs.load(this);
-        TranscriptionEngine engine = engineFactory.create(config);
+        TranscriptionEngine engine = engineFactory.create(this);
 
         executor.execute(() -> {
             try {
