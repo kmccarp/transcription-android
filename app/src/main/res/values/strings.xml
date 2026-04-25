@@ -4,6 +4,7 @@
     <string name="settings_title">Settings</string>
 
     <string name="instructions_idle">Share an audio note to this app from WhatsApp (or any audio file from another app) and the transcript will appear here.</string>
+    <string name="previous_crash">⚠ The app crashed last time. Stack trace below — tap Share to send it.</string>
     <string name="status_reading">Reading shared audio…</string>
     <string name="status_transcribing">Transcribing via Ollama…</string>
     <string name="status_done">Done.</string>

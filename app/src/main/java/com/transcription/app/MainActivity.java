@@ -94,6 +94,19 @@ public class MainActivity extends AppCompatActivity {
                                               : Executors.newSingleThreadExecutor();
         mainHandler = new Handler(Looper.getMainLooper());
 
+        // If the previous run died, surface the trace inline so it can be
+        // screenshotted off the device. Crash text takes priority over the
+        // share-intent flow because if it crashed once, it'll likely crash
+        // again on the same input — show what happened first.
+        String crash = CrashLog.consume(this);
+        if (crash != null) {
+            statusText.setText(R.string.previous_crash);
+            resultText.setText(crash);
+            copyButton.setEnabled(true);
+            shareButton.setEnabled(true);
+            return;
+        }
+
         Uri audio = ShareIntents.extractAudioUri(getIntent());
         if (audio != null) {
             startTranscription(audio);
