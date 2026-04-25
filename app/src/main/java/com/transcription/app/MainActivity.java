@@ -1,117 +1,131 @@
 package com.transcription.app;
 
-import android.content.ClipData;
-import android.content.ClipboardManager;
-import android.content.Context;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.TextUtils;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.widget.Button;
-import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import com.transcription.core.AudioBytes;
-import com.transcription.core.TranscriptionEngine;
-import com.transcription.core.TranscriptionException;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.List;
+import java.util.UUID;
 
 /**
- * Single-activity host. Handles two entry points:
- *
- * <ul>
- *   <li>Cold launch (LAUNCHER) — shows instructions.</li>
- *   <li>{@link Intent#ACTION_SEND} of audio — reads the stream, runs it
- *       through the configured {@link TranscriptionEngine}, and shows the
- *       resulting text.</li>
- * </ul>
- *
- * <p>Threading: I/O and transcription run on a single-threaded background
- * executor; UI updates are posted to the main thread. There is no rotation
- * persistence — the Activity re-runs on configuration change. That's
- * intentional: a transcription is fast, and replaying it costs no Ollama
- * compute on cache hit.
+ * Home screen — shows the {@link TranscriptionStore} as a {@link RecyclerView}
+ * of past and in-flight transcripts. On {@link Intent#ACTION_SEND} of audio,
+ * stores the bytes and asks {@link TranscriptionService} to transcribe in
+ * the background.
  */
 public class MainActivity extends AppCompatActivity {
 
-    private TextView statusText;
-    private TextView resultText;
-    private ProgressBar progress;
-    private Button copyButton;
-    private Button shareButton;
+    private static final int REQ_POST_NOTIFICATIONS = 0xC011;
 
-    private java.util.concurrent.Executor executor;
-    private Handler mainHandler;
+    private TranscriptionStore store;
+    private TranscriptAdapter   adapter;
+    private RecyclerView        list;
+    private TextView            empty;
+    private Handler             ui;
 
-    /** Hook for tests. Defaults to {@link Transcribers#DEFAULT}. */
-    private static Transcribers.Factory engineFactory = Transcribers.DEFAULT;
-
-    /** Hook for tests. Defaults to a fresh single-thread {@link ExecutorService}. */
-    private static java.util.concurrent.Executor testExecutor;
-
-    @VisibleForTesting
-    public static void setEngineFactory(Transcribers.Factory factory) {
-        engineFactory = (factory != null) ? factory : Transcribers.DEFAULT;
-    }
-
-    /**
-     * Tests inject a synchronous {@link java.util.concurrent.Executor} (e.g.
-     * {@code Runnable::run}) so the transcription work happens inline and
-     * Robolectric can drain only the main looper to observe results.
-     */
-    @VisibleForTesting
-    public static void setExecutor(java.util.concurrent.Executor executor) {
-        testExecutor = executor;
-    }
+    private final TranscriptionStore.Listener listener = snapshot -> {
+        // Listener fires off the IO thread; jump to main.
+        ui.post(() -> render(snapshot));
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        setTitle(R.string.history_title);
 
-        statusText  = findViewById(R.id.statusText);
-        resultText  = findViewById(R.id.resultText);
-        progress    = findViewById(R.id.progress);
-        copyButton  = findViewById(R.id.copyButton);
-        shareButton = findViewById(R.id.shareButton);
+        list      = findViewById(R.id.historyList);
+        empty     = findViewById(R.id.emptyState);
+        adapter   = new TranscriptAdapter(this::openTranscript);
+        list.setLayoutManager(new LinearLayoutManager(this));
+        list.setAdapter(adapter);
 
-        copyButton.setOnClickListener(v -> copyToClipboard());
-        shareButton.setOnClickListener(v -> shareTranscript());
+        store     = new TranscriptionStore(this);
+        ui        = new Handler(Looper.getMainLooper());
+        TranscriptionService.ensureChannel(this);
 
-        executor    = (testExecutor != null) ? testExecutor
-                                              : Executors.newSingleThreadExecutor();
-        mainHandler = new Handler(Looper.getMainLooper());
-
-        // If the previous run died, surface the trace inline so it can be
-        // screenshotted off the device. Crash text takes priority over the
-        // share-intent flow because if it crashed once, it'll likely crash
-        // again on the same input — show what happened first.
-        String crash = CrashLog.consume(this);
-        if (crash != null) {
-            statusText.setText(R.string.previous_crash);
-            resultText.setText(crash);
-            copyButton.setEnabled(true);
-            shareButton.setEnabled(true);
-            return;
+        // Surface a previous fatal crash if any (from CrashLog) by piggy-backing
+        // on the same flow: store an ERROR-status entry. Only do this on cold
+        // launch (no share intent), so we don't shadow an inbound share.
+        if (savedInstanceState == null) {
+            String crash = CrashLog.consume(this);
+            if (crash != null) {
+                store.add(TranscriptionStore.Item.pending("local", "auto",
+                        "crash-" + System.currentTimeMillis()).toBuilder()
+                        .status(TranscriptionStore.Status.ERROR)
+                        .errorMessage(crash)
+                        .build());
+            }
         }
 
-        Uri audio = ShareIntents.extractAudioUri(getIntent());
+        // Handle a share intent — but only on the very first onCreate of this
+        // task, so navigating back to the activity doesn't re-run the share.
+        if (savedInstanceState == null) {
+            Uri audio = ShareIntents.extractAudioUri(getIntent());
+            if (audio != null) {
+                handleSharedAudio(audio);
+            } else if (Intent.ACTION_SEND.equals(getIntent().getAction())) {
+                Toast.makeText(this, R.string.error_no_audio, Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        store.registerListener(listener);
+        // Snapshot now so the list is correct without waiting for the next event.
+        List<TranscriptionStore.Item> initial = store.list();
+        render(initial);
+    }
+
+    @Override
+    protected void onPause() {
+        store.unregisterListener(listener);
+        super.onPause();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        Uri audio = ShareIntents.extractAudioUri(intent);
         if (audio != null) {
-            startTranscription(audio);
-        } else if (Intent.ACTION_SEND.equals(getIntent().getAction())) {
-            statusText.setText(R.string.error_no_audio);
+            handleSharedAudio(audio);
+        } else if (Intent.ACTION_SEND.equals(intent.getAction())) {
+            Toast.makeText(this, R.string.error_no_audio, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void render(@NonNull List<TranscriptionStore.Item> snapshot) {
+        adapter.replaceAll(snapshot);
+        boolean hasItems = !snapshot.isEmpty();
+        list.setVisibility(hasItems ? View.VISIBLE : View.GONE);
+        empty.setVisibility(hasItems ? View.GONE : View.VISIBLE);
+    }
+
+    private void openTranscript(@NonNull TranscriptionStore.Item item) {
+        startActivity(new Intent(this, TranscriptActivity.class)
+                .putExtra(TranscriptActivity.EXTRA_ID, item.id));
     }
 
     @Override
@@ -128,121 +142,78 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
         if (id == R.id.action_diagnostics) {
-            String diag = Diagnostics.build(this);
-            statusText.setText(R.string.action_diagnostics);
-            resultText.setText(diag);
-            copyButton.setEnabled(true);
-            shareButton.setEnabled(true);
+            startActivity(new Intent(this, DiagnosticsActivity.class));
+            return true;
+        }
+        if (id == R.id.action_clear_history) {
+            new AlertDialog.Builder(this)
+                    .setMessage(R.string.history_clear_confirm)
+                    .setPositiveButton(R.string.history_clear, (d, w) -> store.clear())
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
             return true;
         }
         return super.onOptionsItemSelected(item);
     }
 
-    @Override
-    protected void onDestroy() {
-        if (executor instanceof ExecutorService) {
-            ((ExecutorService) executor).shutdownNow();
-        }
-        super.onDestroy();
-    }
-
-    // ----- core flow -------------------------------------------------------
+    // ---- share intent → store → service ---------------------------------
 
     @VisibleForTesting
-    void startTranscription(Uri uri) {
-        progress.setVisibility(View.VISIBLE);
-        statusText.setText(R.string.status_reading);
-        resultText.setText("");
-        copyButton.setEnabled(false);
-        shareButton.setEnabled(false);
-
-        TranscriptionEngine engine = engineFactory.create(this);
-
-        executor.execute(() -> {
-            try {
-                runTranscriptionPipeline(uri, engine);
-            } catch (RuntimeException unexpected) {
-                // Catchall: anything we didn't anticipate becomes a visible
-                // status string instead of a silent process-killing crash.
-                postError(getString(R.string.error_transcription,
-                        unexpected.getClass().getSimpleName()
-                                + (unexpected.getMessage() != null
-                                        ? ": " + unexpected.getMessage() : "")));
-            }
-        });
-    }
-
-    private void runTranscriptionPipeline(Uri uri, TranscriptionEngine engine) {
-        byte[] audio;
-        try (InputStream in = getContentResolver().openInputStream(uri)) {
-            if (in == null) {
-                postError(getString(R.string.error_unreadable, "stream is null"));
-                return;
-            }
-            audio = AudioBytes.readAll(in);
-        } catch (IOException ioe) {
-            postError(getString(R.string.error_unreadable,
-                    ioe.getMessage() != null ? ioe.getMessage() : "I/O error"));
-            return;
-        } catch (SecurityException | UnsupportedOperationException e) {
-            // SecurityException: provider permission denied.
-            // UnsupportedOperationException: a content provider that
-            // claims to back the URI but can't actually stream it
-            // (also what Robolectric throws for unregistered URIs).
-            postError(getString(R.string.error_unreadable,
-                    e.getMessage() != null ? e.getMessage() : "no provider for " + uri));
-            return;
-        }
-
-        mainHandler.post(() -> statusText.setText(R.string.status_transcribing));
+    void handleSharedAudio(@NonNull Uri uri) {
+        ensurePostNotificationsPermission();
         try {
-            String text = engine.transcribe(audio);
-            postSuccess(text);
+            File audioFile = stashAudio(uri);
+            String label = labelForUri(uri);
+            TranscriptionStore.Item item = TranscriptionStore.Item
+                    .pending(Prefs.engineKind(this), Prefs.language(this), label)
+                    .audioPath("audio/" + audioFile.getName())
+                    .build();
+            store.add(item);
+            TranscriptionService.enqueue(this);
+            Toast.makeText(this, R.string.status_pending, Toast.LENGTH_SHORT).show();
         } catch (IOException ioe) {
-            postError(getString(R.string.error_transcription,
-                    ioe.getMessage() != null ? ioe.getMessage() : "network error"));
-        } catch (TranscriptionException te) {
-            postError(getString(R.string.error_transcription, te.getMessage()));
+            Toast.makeText(this,
+                    getString(R.string.error_unreadable,
+                            ioe.getMessage() != null ? ioe.getMessage() : "I/O"),
+                    Toast.LENGTH_LONG).show();
+        } catch (SecurityException | UnsupportedOperationException e) {
+            Toast.makeText(this,
+                    getString(R.string.error_unreadable,
+                            e.getMessage() != null ? e.getMessage() : "no provider"),
+                    Toast.LENGTH_LONG).show();
         }
     }
 
-    private void postSuccess(String text) {
-        mainHandler.post(() -> {
-            progress.setVisibility(View.GONE);
-            statusText.setText(R.string.status_done);
-            resultText.setText(text);
-            boolean hasContent = !TextUtils.isEmpty(text);
-            copyButton.setEnabled(hasContent);
-            shareButton.setEnabled(hasContent);
-        });
+    /** Copies the shared bytes into our private files dir. */
+    private File stashAudio(@NonNull Uri uri) throws IOException {
+        File dir = new File(getFilesDir(), "audio");
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw new IOException("Couldn't create audio dir at " + dir);
+        }
+        File dest = new File(dir, UUID.randomUUID().toString() + ".bin");
+        try (InputStream in = getContentResolver().openInputStream(uri);
+             FileOutputStream out = new FileOutputStream(dest)) {
+            if (in == null) throw new IOException("Provider returned null stream");
+            byte[] bytes = AudioBytes.readAll(in);
+            out.write(bytes);
+        }
+        return dest;
     }
 
-    private void postError(String message) {
-        mainHandler.post(() -> {
-            progress.setVisibility(View.GONE);
-            statusText.setText(message);
-            resultText.setText("");
-            copyButton.setEnabled(false);
-            shareButton.setEnabled(false);
-        });
+    private static String labelForUri(@NonNull Uri uri) {
+        String last = uri.getLastPathSegment();
+        if (last == null || last.isEmpty()) return "audio";
+        // Strip any trailing "/" or query bits; keep the last 64 chars.
+        if (last.length() > 64) last = "…" + last.substring(last.length() - 63);
+        return last;
     }
 
-    // ----- buttons --------------------------------------------------------
-
-    private void copyToClipboard() {
-        CharSequence text = resultText.getText();
-        if (TextUtils.isEmpty(text)) return;
-        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        cm.setPrimaryClip(ClipData.newPlainText(getString(R.string.copy_label), text));
-        Toast.makeText(this, R.string.copied_to_clipboard, Toast.LENGTH_SHORT).show();
-    }
-
-    private void shareTranscript() {
-        CharSequence text = resultText.getText();
-        if (TextUtils.isEmpty(text)) return;
-        Intent send = new Intent(Intent.ACTION_SEND);
-        send.setType("text/plain");
-        send.putExtra(Intent.EXTRA_TEXT, text.toString());
-        startActivity(Intent.createChooser(send, getString(R.string.action_share)));
+    private void ensurePostNotificationsPermission() {
+        if (Build.VERSION.SDK_INT < 33) return;
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) return;
+        requestPermissions(
+                new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                REQ_POST_NOTIFICATIONS);
     }
 }
