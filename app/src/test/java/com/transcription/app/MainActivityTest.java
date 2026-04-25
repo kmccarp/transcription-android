@@ -127,8 +127,10 @@ public class MainActivityTest {
         assertTrue(status, status.contains("connection refused"));
     }
 
-    @Test public void share_unreadableUri_showsReadError() {
-        // No registered InputStream for this URI → openInputStream returns null.
+    @Test public void share_unregisteredUri_showsReadError() {
+        // No registered stream for this URI. Robolectric returns a synthetic
+        // stream that throws UnsupportedOperationException on read; production
+        // code catches it and surfaces the read-error message.
         Uri broken = Uri.parse("content://nope/whatever");
         Intent intent = new Intent(Intent.ACTION_SEND)
                 .setType("audio/ogg")
@@ -142,7 +144,7 @@ public class MainActivityTest {
 
         String status = ((TextView) activity.findViewById(R.id.statusText))
                 .getText().toString();
-        assertTrue("expected 'Couldn\\'t read' in status, got: " + status,
+        assertTrue("expected error_unreadable status, got: " + status,
                 status.startsWith("Couldn"));
     }
 

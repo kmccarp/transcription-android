@@ -150,9 +150,13 @@ public class MainActivity extends AppCompatActivity {
                 postError(getString(R.string.error_unreadable,
                         ioe.getMessage() != null ? ioe.getMessage() : "I/O error"));
                 return;
-            } catch (SecurityException se) {
+            } catch (SecurityException | UnsupportedOperationException e) {
+                // SecurityException: provider permission denied.
+                // UnsupportedOperationException: a content provider that
+                // claims to back the URI but can't actually stream it
+                // (also what Robolectric throws for unregistered URIs).
                 postError(getString(R.string.error_unreadable,
-                        "permission denied for " + uri));
+                        e.getMessage() != null ? e.getMessage() : "no provider for " + uri));
                 return;
             }
 
