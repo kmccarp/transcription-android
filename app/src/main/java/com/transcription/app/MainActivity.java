@@ -139,38 +139,51 @@ public class MainActivity extends AppCompatActivity {
         TranscriptionEngine engine = engineFactory.create(config);
 
         executor.execute(() -> {
-            byte[] audio;
-            try (InputStream in = getContentResolver().openInputStream(uri)) {
-                if (in == null) {
-                    postError(getString(R.string.error_unreadable, "stream is null"));
-                    return;
-                }
-                audio = AudioBytes.readAll(in);
-            } catch (IOException ioe) {
-                postError(getString(R.string.error_unreadable,
-                        ioe.getMessage() != null ? ioe.getMessage() : "I/O error"));
-                return;
-            } catch (SecurityException | UnsupportedOperationException e) {
-                // SecurityException: provider permission denied.
-                // UnsupportedOperationException: a content provider that
-                // claims to back the URI but can't actually stream it
-                // (also what Robolectric throws for unregistered URIs).
-                postError(getString(R.string.error_unreadable,
-                        e.getMessage() != null ? e.getMessage() : "no provider for " + uri));
-                return;
-            }
-
-            mainHandler.post(() -> statusText.setText(R.string.status_transcribing));
             try {
-                String text = engine.transcribe(audio);
-                postSuccess(text);
-            } catch (IOException ioe) {
+                runTranscriptionPipeline(uri, engine);
+            } catch (RuntimeException unexpected) {
+                // Catchall: anything we didn't anticipate becomes a visible
+                // status string instead of a silent process-killing crash.
                 postError(getString(R.string.error_transcription,
-                        ioe.getMessage() != null ? ioe.getMessage() : "network error"));
-            } catch (TranscriptionException te) {
-                postError(getString(R.string.error_transcription, te.getMessage()));
+                        unexpected.getClass().getSimpleName()
+                                + (unexpected.getMessage() != null
+                                        ? ": " + unexpected.getMessage() : "")));
             }
         });
+    }
+
+    private void runTranscriptionPipeline(Uri uri, TranscriptionEngine engine) {
+        byte[] audio;
+        try (InputStream in = getContentResolver().openInputStream(uri)) {
+            if (in == null) {
+                postError(getString(R.string.error_unreadable, "stream is null"));
+                return;
+            }
+            audio = AudioBytes.readAll(in);
+        } catch (IOException ioe) {
+            postError(getString(R.string.error_unreadable,
+                    ioe.getMessage() != null ? ioe.getMessage() : "I/O error"));
+            return;
+        } catch (SecurityException | UnsupportedOperationException e) {
+            // SecurityException: provider permission denied.
+            // UnsupportedOperationException: a content provider that
+            // claims to back the URI but can't actually stream it
+            // (also what Robolectric throws for unregistered URIs).
+            postError(getString(R.string.error_unreadable,
+                    e.getMessage() != null ? e.getMessage() : "no provider for " + uri));
+            return;
+        }
+
+        mainHandler.post(() -> statusText.setText(R.string.status_transcribing));
+        try {
+            String text = engine.transcribe(audio);
+            postSuccess(text);
+        } catch (IOException ioe) {
+            postError(getString(R.string.error_transcription,
+                    ioe.getMessage() != null ? ioe.getMessage() : "network error"));
+        } catch (TranscriptionException te) {
+            postError(getString(R.string.error_transcription, te.getMessage()));
+        }
     }
 
     private void postSuccess(String text) {
