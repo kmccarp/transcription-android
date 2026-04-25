@@ -8,12 +8,8 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import java.io.IOException;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Base64;
-import java.util.concurrent.CompletableFuture;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
@@ -59,7 +55,9 @@ public class OllamaTranscriptionEngineTest {
         RecordedRequest rec = server.takeRequest();
         assertEquals("POST", rec.getMethod());
         assertEquals("/api/generate", rec.getPath());
-        assertEquals("application/json", rec.getHeader("Content-Type"));
+        assertTrue("Content-Type should declare JSON: " + rec.getHeader("Content-Type"),
+                rec.getHeader("Content-Type") != null
+                        && rec.getHeader("Content-Type").startsWith("application/json"));
 
         String body = rec.getBody().readUtf8();
         // Verify the model + prompt + stream:false + base64 of audio are all present.
@@ -171,64 +169,30 @@ public class OllamaTranscriptionEngineTest {
         assertTrue(ex.getMessage(), ex.getMessage().contains("HTTP 199"));
     }
 
-    // ---- IO and interruption ---------------------------------------------
+    // ---- transport failures ----------------------------------------------
 
-    @Test public void interruptedSend_isReportedAsIOException() throws Exception {
-        // Use a custom HttpClient that throws InterruptedException synchronously.
-        HttpClient throwing = new HttpClient() {
-            @Override public java.util.Optional<java.net.CookieHandler> cookieHandler() { return java.util.Optional.empty(); }
-            @Override public java.util.Optional<Duration> connectTimeout() { return java.util.Optional.empty(); }
-            @Override public Redirect followRedirects() { return Redirect.NEVER; }
-            @Override public java.util.Optional<java.net.ProxySelector> proxy() { return java.util.Optional.empty(); }
-            @Override public javax.net.ssl.SSLContext sslContext() {
-                try { return javax.net.ssl.SSLContext.getDefault(); } catch (Exception e) { throw new RuntimeException(e); }
-            }
-            @Override public javax.net.ssl.SSLParameters sslParameters() { return new javax.net.ssl.SSLParameters(); }
-            @Override public java.util.Optional<java.net.Authenticator> authenticator() { return java.util.Optional.empty(); }
-            @Override public Version version() { return Version.HTTP_1_1; }
-            @Override public java.util.Optional<java.util.concurrent.Executor> executor() { return java.util.Optional.empty(); }
-            @Override public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler)
-                    throws InterruptedException {
-                throw new InterruptedException("boom");
-            }
-            @Override public <T> CompletableFuture<HttpResponse<T>> sendAsync(
-                    HttpRequest request, HttpResponse.BodyHandler<T> handler) {
-                throw new UnsupportedOperationException();
-            }
-            @Override public <T> CompletableFuture<HttpResponse<T>> sendAsync(
-                    HttpRequest request, HttpResponse.BodyHandler<T> handler,
-                    HttpResponse.PushPromiseHandler<T> push) {
-                throw new UnsupportedOperationException();
-            }
-        };
-
-        OllamaTranscriptionEngine custom = new OllamaTranscriptionEngine(engine.config(), throwing);
+    @Test public void urlOpenerThrowingIOException_propagatesToCaller() {
+        OllamaTranscriptionEngine custom = new OllamaTranscriptionEngine(
+                engine.config(),
+                url -> { throw new IOException("nic on fire"); });
         IOException ex = assertThrows(IOException.class,
                 () -> custom.transcribe(new byte[]{1}));
-        assertTrue(ex.getMessage(), ex.getMessage().contains("Interrupted"));
-        // Re-interrupt is preserved on the calling thread.
-        assertTrue("thread should remain interrupted",
-                Thread.interrupted() /* clears the flag for cleanup */);
+        assertTrue(ex.getMessage(), ex.getMessage().contains("nic on fire"));
     }
 
-    @Test public void networkFailure_propagatesIOException() throws Exception {
-        // Point the engine at an unreachable port. Use an explicit client with a
-        // very short timeout so the test stays fast.
+    @Test public void networkFailure_toUnreachableHost_propagatesIOException() throws Exception {
+        // Point the engine at an unreachable port to exercise the live
+        // HttpURLConnection error path.
         OllamaConfig cfg = OllamaConfig.builder()
                 .baseUrl("http://127.0.0.1:1") // port 1 — guaranteed-refused on Linux
                 .timeout(Duration.ofSeconds(1))
                 .build();
-        HttpClient quickClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(500)).build();
-        OllamaTranscriptionEngine custom = new OllamaTranscriptionEngine(cfg, quickClient);
-
+        OllamaTranscriptionEngine custom = new OllamaTranscriptionEngine(cfg);
         try {
             custom.transcribe(new byte[]{1});
             fail("expected IOException");
         } catch (IOException expected) {
-            // Either ConnectException or HttpConnectTimeoutException is fine —
-            // the only thing that matters is that the engine surfaces the
-            // network failure as an IOException to its caller.
+            // ConnectException / SocketTimeoutException — both fine.
         } catch (TranscriptionException te) {
             fail("expected IOException, got TranscriptionException: " + te);
         }
@@ -247,5 +211,4 @@ public class OllamaTranscriptionEngineTest {
                 OllamaConfig.builder().build());
         assertNotNull(c.config());
     }
-
 }

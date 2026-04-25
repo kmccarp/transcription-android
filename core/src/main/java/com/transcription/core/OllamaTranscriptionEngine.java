@@ -1,10 +1,12 @@
 package com.transcription.core;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Objects;
 
@@ -19,23 +21,30 @@ import java.util.Objects;
  * documented way to ship audio bytes; the model handles ffmpeg-style decoding
  * of Opus/Ogg server-side.
  *
+ * <p>HTTP I/O uses {@link HttpURLConnection} so the same code runs on both
+ * the JVM (for unit tests) and on Android. The newer {@code java.net.http}
+ * stack would be cleaner but Android does not ship it.
+ *
  * <p>This class is stateless after construction; you can share one instance
  * across calls. It does not retry — callers wrap retries in their own policy.
  */
 public final class OllamaTranscriptionEngine implements TranscriptionEngine {
 
-    private final OllamaConfig config;
-    private final HttpClient httpClient;
+    /** Read up to this many bytes from a single HTTP response. */
+    private static final int MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-    /** Builds an engine with a fresh {@link HttpClient}. */
+    private final OllamaConfig config;
+    private final UrlOpener urlOpener;
+
+    /** Builds an engine that talks to a real network. */
     public OllamaTranscriptionEngine(OllamaConfig config) {
-        this(config, HttpClient.newBuilder().build());
+        this(config, url -> (HttpURLConnection) new URL(url).openConnection());
     }
 
-    /** Visible for tests: lets callers inject a pre-configured {@link HttpClient}. */
-    OllamaTranscriptionEngine(OllamaConfig config, HttpClient httpClient) {
+    /** Visible for tests: lets callers inject a fake URL opener. */
+    OllamaTranscriptionEngine(OllamaConfig config, UrlOpener urlOpener) {
         this.config = Objects.requireNonNull(config, "config");
-        this.httpClient = Objects.requireNonNull(httpClient, "httpClient");
+        this.urlOpener = Objects.requireNonNull(urlOpener, "urlOpener");
     }
 
     public OllamaConfig config() {
@@ -49,24 +58,29 @@ public final class OllamaTranscriptionEngine implements TranscriptionEngine {
             throw new TranscriptionException("Audio payload is empty");
         }
 
-        String body = buildRequestBody(audio);
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(config.generateUrl()))
-                .timeout(config.timeout())
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response;
+        byte[] body = buildRequestBody(audio).getBytes(StandardCharsets.UTF_8);
+        HttpURLConnection conn = urlOpener.open(config.generateUrl());
         try {
-            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while waiting for Ollama", ie);
-        }
+            int timeoutMs = (int) Math.min(Integer.MAX_VALUE, config.timeout().toMillis());
+            conn.setConnectTimeout(timeoutMs);
+            conn.setReadTimeout(timeoutMs);
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+            conn.setRequestProperty("Accept", "application/json");
+            conn.setRequestProperty("Content-Length", Integer.toString(body.length));
+            conn.setDoOutput(true);
+            conn.setUseCaches(false);
 
-        return parseResponse(response.statusCode(), response.body());
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(body);
+            }
+
+            int status = conn.getResponseCode();
+            String responseBody = readResponseBody(conn, status);
+            return parseResponse(status, responseBody);
+        } finally {
+            conn.disconnect();
+        }
     }
 
     /** Builds the {@code /api/generate} request body. Package-visible for tests. */
@@ -103,5 +117,41 @@ public final class OllamaTranscriptionEngine implements TranscriptionEngine {
                     "Ollama response did not contain a \"response\" field: " + body);
         }
         return response.trim();
+    }
+
+    private static String readResponseBody(HttpURLConnection conn, int status) {
+        // For 4xx/5xx, getInputStream() throws — read getErrorStream() instead.
+        InputStream stream;
+        try {
+            stream = (status >= 200 && status < 400)
+                    ? conn.getInputStream()
+                    : conn.getErrorStream();
+        } catch (IOException ioe) {
+            stream = conn.getErrorStream();
+        }
+        if (stream == null) return "";
+        try (InputStream in = stream) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8 * 1024];
+            int total = 0;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > MAX_RESPONSE_BYTES) {
+                    // Truncate; we'll still try to parse what we have.
+                    out.write(buf, 0, n);
+                    break;
+                }
+                out.write(buf, 0, n);
+            }
+            return out.toString(StandardCharsets.UTF_8.name());
+        } catch (IOException ioe) {
+            return "";
+        }
+    }
+
+    /** Test seam for opening a URL. */
+    interface UrlOpener {
+        HttpURLConnection open(String url) throws IOException;
     }
 }
