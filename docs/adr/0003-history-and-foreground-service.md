@@ -2,7 +2,7 @@
 
 | Status   | Date       | Authors  |
 |----------|------------|----------|
-| Proposed | 2026-04-25 | @kmccarp |
+| Accepted | 2026-04-25 | @kmccarp |
 
 ## Context
 
