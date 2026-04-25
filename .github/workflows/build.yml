@@ -1,0 +1,177 @@
+name: build
+
+# CI runs the same Gradle commands that contributors run locally.
+# Don't add inline shell logic here — codify it as a Gradle task so it's
+# reproducible with `./gradlew ciSomething` from any developer's machine.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ANDROID_API_LEVEL: '34'
+  ANDROID_BUILD_TOOLS: '34.0.0'
+
+jobs:
+  verify:
+    name: ciCheck (tests + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-${{ env.ANDROID_API_LEVEL }}
+            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: ./gradlew ciCheck
+        id: ciCheck
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew ciCheck --stacktrace --console=plain --warning-mode=summary 2>&1 \
+              | tee gradle-ciCheck.log
+
+      # Surface failures on the PR check page without admin log access.
+      - name: Surface failure
+        if: failure() && steps.ciCheck.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "## ciCheck failed" >> "$GITHUB_STEP_SUMMARY"
+          # 1) Test failure XMLs (when tests actually ran)
+          if find core/build/test-results app/build/test-results -name 'TEST-*.xml' -print -quit 2>/dev/null | grep -q .; then
+            for xml in $(find core/build/test-results app/build/test-results -name 'TEST-*.xml' 2>/dev/null); do
+              echo "<details><summary>$xml</summary>" >> "$GITHUB_STEP_SUMMARY"
+              echo '' >> "$GITHUB_STEP_SUMMARY"
+              echo '```xml' >> "$GITHUB_STEP_SUMMARY"
+              cat "$xml" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+            done
+            python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          for path in glob.glob('**/build/test-results/**/TEST-*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+              except Exception as e:
+                  print(f"::error file={path}::could not parse: {e}")
+                  continue
+              for tc in root.iter('testcase'):
+                  for f in tc.findall('failure') + tc.findall('error'):
+                      cls = tc.get('classname', '?')
+                      name = tc.get('name', '?')
+                      msg = (f.get('message') or '').splitlines()[0][:300]
+                      body = (f.text or '').strip().splitlines()
+                      preview = ' / '.join(body[:5])[:500]
+                      print(f"::error title={cls}.{name}::{msg} | {preview}")
+          PY
+          fi
+          # 2) Always also dump the last 200 lines of gradle output so we
+          # never have a silent failure from a compile/configure phase.
+          if [ -f gradle-ciCheck.log ]; then
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            echo '<details><summary>Last 200 lines of <code>gradle-ciCheck.log</code></summary>' >> "$GITHUB_STEP_SUMMARY"
+            echo '' >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -n 200 gradle-ciCheck.log >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo '</details>' >> "$GITHUB_STEP_SUMMARY"
+
+            # Also promote anything that looks like a clear error to an
+            # annotation so it shows up on the PR check page directly.
+            python3 - <<'PY'
+          import re, sys
+          with open('gradle-ciCheck.log') as f:
+              lines = f.read().splitlines()
+          # Simple heuristic: anything with "error:" or "FAILED" or "FAILURE:"
+          # turns into a single annotation, capped at 10 to avoid noise.
+          out = [l for l in lines if re.search(r"(error:|FAILED|FAILURE:|undefined reference)", l)]
+          for l in out[:20]:
+              print(f"::error::{l}")
+          PY
+          fi
+
+      - name: ./gradlew ciCoverageReports
+        if: always()
+        run: ./gradlew ciCoverageReports --stacktrace || true
+
+      - name: ./gradlew ciLint
+        if: always()
+        run: ./gradlew ciLint --stacktrace || true
+
+      - name: Upload JaCoCo reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-reports
+          path: |
+            core/build/reports/jacoco/**
+            app/build/reports/jacoco/**
+            app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+
+      - name: Upload test reports (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            core/build/reports/tests/**
+            app/build/reports/tests/**
+            core/build/test-results/**
+            app/build/test-results/**
+          if-no-files-found: ignore
+
+  apk:
+    name: ciAssemble (debug APK)
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            tools
+            platform-tools
+            platforms;android-${{ env.ANDROID_API_LEVEL }}
+            build-tools;${{ env.ANDROID_BUILD_TOOLS }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: ./gradlew ciAssemble
+        run: ./gradlew ciAssemble --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk

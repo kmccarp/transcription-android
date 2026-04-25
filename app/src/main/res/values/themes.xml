@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Plain AppCompat theme so the overflow menu (Settings) renders without
+      pulling in a Material3 Toolbar setup. Day/night follows the system.
+    -->
+    <style name="Theme.Transcription" parent="Theme.AppCompat.DayNight.DarkActionBar"/>
+</resources>

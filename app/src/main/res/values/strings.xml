@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">WA Transcribe</string>
+    <string name="settings_title">Settings</string>
+
+    <string name="instructions_idle">Share an audio note to this app from WhatsApp (or any audio file from another app) and the transcript will appear here.</string>
+    <string name="previous_crash">⚠ The app crashed last time. Stack trace below — tap Share to send it.</string>
+    <string name="status_reading">Reading shared audio…</string>
+    <string name="status_decoding">Decoding audio…</string>
+    <string name="status_transcribing">Transcribing…</string>
+    <string name="status_done">Done.</string>
+    <string name="status_pending">Queued.</string>
+
+    <string name="notification_channel_name">Transcription</string>
+    <string name="notification_channel_desc">Shows progress while transcribing shared audio.</string>
+    <string name="notification_title">Transcribing audio</string>
+    <string name="notification_done_title">Transcript ready</string>
+    <string name="notification_failed_title">Transcription failed</string>
+
+    <string name="history_title">Transcripts</string>
+    <string name="history_empty">No transcripts yet. Share a voice note from WhatsApp to get started.</string>
+    <string name="history_clear">Clear history</string>
+    <string name="history_clear_confirm">Delete all saved transcripts?</string>
+    <string name="history_open">Open</string>
+    <string name="history_delete">Delete</string>
+    <string name="history_retry">Retry</string>
+    <string name="error_no_audio">No audio was shared.</string>
+    <string name="error_unreadable">Couldn\'t read the shared audio: %1$s</string>
+    <string name="error_transcription">Transcription failed: %1$s</string>
+
+    <string name="action_copy">Copy</string>
+    <string name="action_share">Share</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_diagnostics">Diagnostics</string>
+    <string name="copy_label">Transcript</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
+
+    <string name="pref_cat_engine">Transcription engine</string>
+    <string name="pref_cat_ollama">Ollama (remote, optional)</string>
+    <string name="pref_engine_title">Engine</string>
+    <string name="pref_language_title">Language</string>
+    <string name="pref_language_summary">ISO-639-1 code (\"en\", \"fr\", …) or \"auto\" for autodetection.</string>
+    <string name="pref_threads_title">CPU threads</string>
+    <string name="pref_threads_summary">Higher is faster up to your phone\'s core count. Default: 4.</string>
+
+    <string name="pref_base_url_title">Ollama base URL</string>
+    <string name="pref_base_url_summary">Default 10.0.2.2:11434 reaches the host machine\'s Ollama server when running on the Android emulator.</string>
+    <string name="pref_model_title">Model name</string>
+    <string name="pref_model_summary">An audio-capable Ollama model, e.g. dimavz/whisper-tiny.</string>
+    <string name="pref_prompt_title">Prompt</string>
+    <string name="pref_prompt_summary">The prompt sent alongside the audio. Most Whisper-style models ignore this.</string>
+</resources>

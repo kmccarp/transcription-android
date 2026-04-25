@@ -1,0 +1,196 @@
+plugins {
+    id 'com.android.application' version '8.7.3'
+    id 'jacoco'
+}
+
+// ---------------------------------------------------------------------------
+// Whisper model: downloaded once into src/main/assets/whisper-model.bin so
+// AGP picks it up automatically into the APK. The default is the multilingual
+// quantized "tiny" model (Q5_1, ~31 MB) which fits in a reasonable APK and
+// runs fast on commodity phones; override with -PwhisperModel=<key> to swap.
+// Optional: pin a SHA-256 by setting -PwhisperModelSha256=<hex>; the task
+// always prints the downloaded file's hash so you can paste it back.
+// ---------------------------------------------------------------------------
+def WHISPER_MODELS = [
+        // Multilingual quantized tiny: best size/quality tradeoff for a phone.
+        'tiny-q5_1'    : 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny-q5_1.bin',
+        // English-only quantized tiny: faster + slightly more accurate for EN.
+        'tiny.en-q5_1' : 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin',
+        // Full-precision tiny if you really need it (~75 MB).
+        'tiny'         : 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
+]
+def WHISPER_KEY    = (project.findProperty('whisperModel') ?: 'tiny-q5_1').toString()
+def WHISPER_SHA256 = (project.findProperty('whisperModelSha256') ?: '').toString()
+
+android {
+    namespace   'com.transcription.app'
+    compileSdk  34
+    ndkVersion  '26.3.11579264'
+
+    defaultConfig {
+        applicationId   'com.transcription.app'
+        minSdk          24
+        targetSdk       34
+        versionCode     3
+        versionName     '0.3.0-history'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static',
+                          '-DWHISPER_BUILD_TESTS=OFF',
+                          '-DWHISPER_BUILD_EXAMPLES=OFF'
+                cppFlags  '-std=c++17', '-O3', '-fexceptions', '-frtti'
+            }
+        }
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        viewBinding = false
+        buildConfig = false
+    }
+
+    buildTypes {
+        debug {
+            testCoverageEnabled true
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                    'proguard-rules.pro'
+        }
+    }
+
+    testOptions {
+        unitTests {
+            includeAndroidResources = true
+            returnDefaultValues = true
+            all {
+                useJUnit()
+                jvmArgs(
+                        '--add-opens=java.base/java.lang=ALL-UNNAMED',
+                        '--add-opens=java.base/java.util=ALL-UNNAMED',
+                        '--add-opens=java.base/java.io=ALL-UNNAMED',
+                        '--add-opens=java.base/java.net=ALL-UNNAMED',
+                        '--add-opens=java.base/java.nio=ALL-UNNAMED',
+                        '--add-opens=java.base/java.text=ALL-UNNAMED',
+                        '--add-opens=java.base/sun.nio.ch=ALL-UNNAMED'
+                )
+            }
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation project(':core')
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.cardview:cardview:1.0.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.preference:preference:1.2.1'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.13'
+    testImplementation 'androidx.test:core:1.6.1'
+    testImplementation 'androidx.test.ext:junit:1.2.1'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+}
+
+jacoco {
+    toolVersion = '0.8.12'
+}
+
+// ---------------------------------------------------------------------------
+// downloadWhisperModel: idempotent fetch + SHA-256 verify into the assets
+// directory. Hooked into preBuild so any APK build picks it up automatically.
+// ---------------------------------------------------------------------------
+def whisperUrl = WHISPER_MODELS[WHISPER_KEY]
+if (whisperUrl == null) {
+    throw new GradleException("Unknown whisperModel '${WHISPER_KEY}'. " +
+            "Known keys: ${WHISPER_MODELS.keySet()}")
+}
+
+tasks.register('downloadWhisperModel') {
+    group       = 'whisper'
+    description = "Downloads the Whisper model (key=${WHISPER_KEY}) into src/main/assets."
+    def dest         = file("src/main/assets/whisper-model.bin")
+    def url          = whisperUrl
+    def expectedSha  = WHISPER_SHA256
+    inputs.property 'url',          url
+    inputs.property 'expectedSha',  expectedSha
+    outputs.file dest
+
+    doLast {
+        dest.parentFile.mkdirs()
+        if (dest.exists() && (expectedSha.isEmpty() || sha256Of(dest) == expectedSha)) {
+            logger.lifecycle("Whisper model already present: ${dest} (${dest.length()} bytes)")
+            return
+        }
+        logger.lifecycle("Downloading Whisper model from ${url}")
+        new URL(url).withInputStream { ins ->
+            dest.withOutputStream { out -> out << ins }
+        }
+        def actual = sha256Of(dest)
+        logger.lifecycle("Whisper model: ${dest} (${dest.length()} bytes) sha256=${actual}")
+        if (!expectedSha.isEmpty() && actual != expectedSha) {
+            dest.delete()
+            throw new GradleException(
+                    "SHA-256 mismatch for ${url}: expected ${expectedSha}, got ${actual}")
+        }
+    }
+}
+
+// Hook the download into asset merging *only* for real APK builds. This
+// keeps `./gradlew :app:testDebugUnitTest` and `:app:lintDebug` fast and
+// offline.
+android.applicationVariants.configureEach { variant ->
+    variant.mergeAssetsProvider.configure { dependsOn 'downloadWhisperModel' }
+}
+
+static String sha256Of(File f) {
+    def md = java.security.MessageDigest.getInstance('SHA-256')
+    f.eachByte(8 * 1024) { buf, n -> md.update(buf, 0, n) }
+    md.digest().collect { String.format('%02x', it & 0xff) }.join()
+}
+
+tasks.register('jacocoTestReport', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    reports {
+        xml.required = true
+        html.required = true
+    }
+    def fileFilter = [
+            '**/R.class', '**/R$*.class', '**/BuildConfig.*',
+            '**/Manifest*.*', '**/*Test*.*', 'android/**/*.*'
+    ]
+    sourceDirectories.setFrom(files(["$projectDir/src/main/java"]))
+    classDirectories.setFrom(fileTree(layout.buildDirectory) {
+        include '**/intermediates/javac/debug/**/classes/**'
+        exclude fileFilter
+    })
+    executionData.setFrom(fileTree(layout.buildDirectory) {
+        include '**/jacoco/testDebugUnitTest.exec'
+    })
+}

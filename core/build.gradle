@@ -1,0 +1,61 @@
+plugins {
+    id 'java-library'
+    id 'jacoco'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+    withSourcesJar()
+}
+
+dependencies {
+    // We deliberately keep runtime dependencies to *zero* so this module is
+    // trivial to embed in the Android app and easy to reason about. All HTTP
+    // is done with java.net.http (JDK 11+).
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+}
+
+test {
+    useJUnit()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+        showStandardStreams = false
+    }
+    finalizedBy jacocoTestReport
+}
+
+jacoco {
+    toolVersion = '0.8.12'
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+jacocoTestCoverageVerification {
+    dependsOn jacocoTestReport
+    violationRules {
+        rule {
+            // We aim for 100% but allow a tiny floor for unreachable
+            // defensive branches (private constructors of utility classes,
+            // exception paths that javac/jvm can't elide). 95% line / 90%
+            // branch is the published bar — see CLAUDE.md.
+            limit {
+                counter = 'LINE'
+                minimum = 0.95
+            }
+            limit {
+                counter = 'BRANCH'
+                minimum = 0.90
+            }
+        }
+    }
+}
