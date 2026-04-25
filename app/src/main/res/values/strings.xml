@@ -6,8 +6,24 @@
     <string name="instructions_idle">Share an audio note to this app from WhatsApp (or any audio file from another app) and the transcript will appear here.</string>
     <string name="previous_crash">⚠ The app crashed last time. Stack trace below — tap Share to send it.</string>
     <string name="status_reading">Reading shared audio…</string>
-    <string name="status_transcribing">Transcribing via Ollama…</string>
+    <string name="status_decoding">Decoding audio…</string>
+    <string name="status_transcribing">Transcribing…</string>
     <string name="status_done">Done.</string>
+    <string name="status_pending">Queued.</string>
+
+    <string name="notification_channel_name">Transcription</string>
+    <string name="notification_channel_desc">Shows progress while transcribing shared audio.</string>
+    <string name="notification_title">Transcribing audio</string>
+    <string name="notification_done_title">Transcript ready</string>
+    <string name="notification_failed_title">Transcription failed</string>
+
+    <string name="history_title">Transcripts</string>
+    <string name="history_empty">No transcripts yet. Share a voice note from WhatsApp to get started.</string>
+    <string name="history_clear">Clear history</string>
+    <string name="history_clear_confirm">Delete all saved transcripts?</string>
+    <string name="history_open">Open</string>
+    <string name="history_delete">Delete</string>
+    <string name="history_retry">Retry</string>
     <string name="error_no_audio">No audio was shared.</string>
     <string name="error_unreadable">Couldn\'t read the shared audio: %1$s</string>
     <string name="error_transcription">Transcription failed: %1$s</string>

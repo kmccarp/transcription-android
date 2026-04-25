@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Required only for the optional remote-Ollama backend. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- Foreground service used to keep transcription running while the
+         activity is in the background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+
+    <!-- API 33+ requires runtime permission to post notifications. We
+         request it on first share; denial means transcription still runs,
+         just without progress notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:name=".TranscriptionApplication"
@@ -35,5 +46,10 @@
             android:exported="false"
             android:label="@string/settings_title"
             android:parentActivityName=".MainActivity"/>
+
+        <service
+            android:name=".TranscriptionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
     </application>
 </manifest>
