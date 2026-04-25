@@ -1,0 +1,40 @@
+// ---------------------------------------------------------------------------
+// Aggregate "ci*" tasks. These are the *only* commands GitHub Actions invoke,
+// so any contributor can reproduce a CI run locally with `./gradlew ciCheck`
+// (or ciAssemble / ciAll). See docs/adr/0001-design.md for rationale.
+//
+// We deliberately do NOT declare the Android Gradle Plugin in this root build
+// — it's only declared in :app. That way `./gradlew :core:test` works on any
+// machine that has just the JDK installed (no Android SDK required), which
+// makes contributing to :core much faster.
+// ---------------------------------------------------------------------------
+tasks.register('ciCheck') {
+    group       = 'verification'
+    description = 'Runs the full verification suite that CI runs (tests + coverage). Requires the Android SDK.'
+    dependsOn ':core:test'
+    dependsOn ':core:jacocoTestReport'
+    dependsOn ':core:jacocoTestCoverageVerification'
+    dependsOn ':app:testDebugUnitTest'
+    dependsOn ':app:lintDebug'
+    dependsOn ':app:jacocoTestReport'
+}
+
+tasks.register('ciCheckCore') {
+    group       = 'verification'
+    description = 'Runs only the :core verification suite (no Android SDK required).'
+    dependsOn ':core:test'
+    dependsOn ':core:jacocoTestReport'
+    dependsOn ':core:jacocoTestCoverageVerification'
+}
+
+tasks.register('ciAssemble') {
+    group       = 'build'
+    description = 'Assembles the debug APK exactly as CI does. Requires the Android SDK.'
+    dependsOn ':app:assembleDebug'
+}
+
+tasks.register('ciAll') {
+    group       = 'build'
+    description = 'Runs ciCheck + ciAssemble (full CI mirror). Requires the Android SDK.'
+    dependsOn 'ciCheck', 'ciAssemble'
+}

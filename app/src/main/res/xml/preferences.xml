@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+    <EditTextPreference
+        app:key="base_url"
+        app:title="@string/pref_base_url_title"
+        app:summary="@string/pref_base_url_summary"
+        app:defaultValue="http://10.0.2.2:11434"
+        app:useSimpleSummaryProvider="true"/>
+    <EditTextPreference
+        app:key="model"
+        app:title="@string/pref_model_title"
+        app:summary="@string/pref_model_summary"
+        app:defaultValue="dimavz/whisper-tiny"
+        app:useSimpleSummaryProvider="true"/>
+    <EditTextPreference
+        app:key="prompt"
+        app:title="@string/pref_prompt_title"
+        app:summary="@string/pref_prompt_summary"
+        app:defaultValue="Transcribe the audio."
+        app:useSimpleSummaryProvider="true"/>
+</PreferenceScreen>
