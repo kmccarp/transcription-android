@@ -35,10 +35,14 @@ read it; it's the canonical style guide.
 ### `:app`
 
 - `com.android.application` Gradle plugin. `compileSdk 34`, `minSdk 24`.
-- One activity (`MainActivity`) for the share target + result, one
-  activity (`SettingsActivity`) for preferences. Don't add navigation
-  graphs, fragments, or DI frameworks until there's a second screen that
-  justifies them.
+- Activities: `MainActivity` (history list + share entry-point),
+  `TranscriptActivity` (detail), `SettingsActivity`,
+  `DiagnosticsActivity`. Don't add a navigation graph or DI framework
+  — four activities don't justify it.
+- Persistence: `TranscriptionStore` (single JSON file, atomic write).
+  No Room/SQLite until volume / shape demands it.
+- Background work: `TranscriptionService` (foreground, type
+  `dataSync`). Activities don't run engines themselves; they enqueue.
 - Threading: `ExecutorService` + `Handler(Looper.getMainLooper())`. No
   RxJava, no coroutines (we're in Java), no `AsyncTask`. If we need
   cancellation we'll move to `WorkManager` — until then, keep it boring.

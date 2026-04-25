@@ -2,10 +2,13 @@
 
 A tiny Android app that turns WhatsApp voice notes (and any other shared
 audio) into text. **The model runs on the phone** — no internet
-required, no audio ever leaves the device.
+required, no audio ever leaves the device. A foreground service does
+the work, so transcription survives backgrounding the app, and a
+RecyclerView history keeps every past transcript a tap away.
 
-> Long-press a WhatsApp voice note → **Share** → **WA Transcribe** → wait a
-> couple of seconds → copy the transcript out.
+> Long-press a WhatsApp voice note → **Share** → **WA Transcribe** → the
+> row appears as **Queued**, flips to **Transcribing**, and lands on
+> **Done** with the text you can copy / share / retry / delete.
 
 The default backend is [whisper.cpp](https://github.com/ggerganov/whisper.cpp)
 with a quantized "tiny" model bundled into the APK. An optional Ollama
