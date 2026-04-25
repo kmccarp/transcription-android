@@ -100,7 +100,7 @@ public class MainActivityTest {
     @Test public void existingHistory_isRenderedOnResume() {
         // Pre-populate the store.
         store.add(TranscriptionStore.Item.pending("local", "auto", "old.opus")
-                .toBuilder().status(TranscriptionStore.Status.DONE)
+                .status(TranscriptionStore.Status.DONE)
                 .transcript("old transcript").build());
         store.awaitIdle();
 

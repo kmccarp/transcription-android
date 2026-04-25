@@ -70,7 +70,7 @@ public class MainActivity extends AppCompatActivity {
             String crash = CrashLog.consume(this);
             if (crash != null) {
                 store.add(TranscriptionStore.Item.pending("local", "auto",
-                        "crash-" + System.currentTimeMillis()).toBuilder()
+                        "crash-" + System.currentTimeMillis())
                         .status(TranscriptionStore.Status.ERROR)
                         .errorMessage(crash)
                         .build());
